@@ -391,7 +391,7 @@
     "Red Component" : 0.3333333432674408,
     "Blue Component" : 1
   },
-  "Window Type" : 2,
+  "Window Type" : 1,
   "Use Bright Bold" : true,
   "Has Hotkey" : true,
   "HotKey Modifier Activation" : 0,
