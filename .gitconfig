@@ -3,3 +3,16 @@
 
 [credential]
 	helper = store
+
+[alias]
+    # Shows the TODO lines added between branch and the named target branch
+    # E.g. "git todo main" to compare current branch with main.
+    # Can be exteded to only show current subfolder by adding this to line 2 - I don't want this though
+    # [ $GIT_PREFIX ] && cd $GIT_PREFIX; \
+    todo = "!sh -c ' \
+        ([ -z \"${1}\" ] && echo \"ERR: branch name missing\") || \
+        (git status --short --branch $* ; \
+        git --no-pager diff -U0 ${1} | \
+        grep \"^+.*TODO\" | \
+        sed \"s/^+//\" | \
+        git --no-pager grep -nFf - 2> /dev/null )' - "
