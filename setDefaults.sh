@@ -4,4 +4,4 @@
 mkdir -p /Users/mark/Pictures/Screenshots;
 defaults write com.apple.screencapture location /Users/mark/Pictures/Screenshots
 cp automation/com.mark.clean-screenshots-dir.plist ~/Library/LaunchAgents
-launchctl load ~/Library/LaunchAgents/com.mark.clean-screenshots-dir.plist
+launchctl load -w ~/Library/LaunchAgents/com.mark.clean-screenshots-dir.plist
