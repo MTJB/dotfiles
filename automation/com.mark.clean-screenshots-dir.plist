@@ -8,7 +8,7 @@
     <array>
       <string>sh</string>
       <string>-c</string>
-      <string>find ~/Pictures/Screenshots/Screenshot* -exec mv {} ~/.Trash \;</string>
+      <string>find ~/Pictures/Screenshots/Screenshot* -mtime +30 -exec mv {} ~/.Trash \;</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
