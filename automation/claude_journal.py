@@ -7,12 +7,16 @@ pulls out what happened in the last N hours, summarizes it with a headless
 `claude -p` call, and writes a daily journal entry into an Obsidian vault.
 
 Usage:
-    python3 claude_journal.py                 # normal run, last 24h
-    python3 claude_journal.py --since-hours 168   # weekly-style run
+    python3 claude_journal.py                 # normal run, summarizes the previous calendar day
+    python3 claude_journal.py --since-hours 168   # rolling-window run (e.g. weekly-style), dated today
     python3 claude_journal.py --dry-run        # print digest, don't call claude or write file
 
-Designed to be triggered by launchd (see com.mark.claudejournal.plist).
+Designed to run daily at 11am via launchd (see com.mark.claudejournal.plist),
+summarizing the prior calendar day. Pass --since-hours for an ad-hoc rolling
+window instead.
 """
+
+from __future__ import annotations
 
 import argparse
 import json
@@ -73,9 +77,9 @@ def extract_text_from_content(content) -> str:
     return ""
 
 
-def parse_session(path: Path, since: datetime) -> dict | None:
+def parse_session(path: Path, since: datetime, until: datetime) -> dict | None:
     """Parse one session JSONL file. Returns a digest dict, or None if
-    the session has no activity after `since`."""
+    the session has no activity in [`since`, `until`)."""
     first_user_msg = None
     tool_names = set()
     files_touched = set()
@@ -106,7 +110,8 @@ def parse_session(path: Path, since: datetime) -> dict | None:
                     if first_ts is None:
                         first_ts = ts
                     last_ts = ts
-                    if ts.astimezone().replace(tzinfo=None) >= since or ts.replace(tzinfo=None) >= since:
+                    ts_local = ts.astimezone().replace(tzinfo=None) if ts.tzinfo else ts
+                    if since <= ts_local < until:
                         activity_after_cutoff = True
 
                 otype = obj.get("type")
@@ -141,7 +146,7 @@ def parse_session(path: Path, since: datetime) -> dict | None:
     # fall back to file mtime if no activity found via timestamps but file is recent
     if last_ts is None:
         mtime = datetime.fromtimestamp(path.stat().st_mtime)
-        if mtime >= since:
+        if since <= mtime < until:
             activity_after_cutoff = True
         last_ts = mtime
 
@@ -158,7 +163,7 @@ def parse_session(path: Path, since: datetime) -> dict | None:
     }
 
 
-def collect_digests(since: datetime) -> dict[str, list[dict]]:
+def collect_digests(since: datetime, until: datetime) -> dict[str, list[dict]]:
     """Returns {project_name: [session_digest, ...]}"""
     results: dict[str, list[dict]] = {}
 
@@ -179,7 +184,7 @@ def collect_digests(since: datetime) -> dict[str, list[dict]]:
             except OSError:
                 continue
 
-            digest = parse_session(jsonl_file, since)
+            digest = parse_session(jsonl_file, since, until)
             if digest:
                 results.setdefault(project_name, []).append(digest)
 
@@ -245,6 +250,57 @@ def summarize_with_claude(digest_text: str) -> str:
     return result.stdout.strip()
 
 
+BACKLINK_PROMPT = """Add Obsidian wiki-links to the journal entry below, which will be
+inserted into an Obsidian vault.
+
+Wrap these in [[ ]] if they appear as plain, unlinked text:
+- Product and tool names: SPM, CIM, IDM, MAP, MCP, FedRAMP, Wiz, Grafana, Slack,
+  Confluence, Jira, Figma, Rovo, Obsidian, Power Automate, Salesforce, NetSuite,
+  Snyk, etc.
+- Internal project/feature codenames: Red Octopus, Planeshift, Contractor Walls,
+  ATF, GRIP, PLG, FeatureFlex, etc.
+- iManage concepts and components: CDEAR, IRM, Hazelcast, AuditHub, Purview, OTS, etc.
+
+Do NOT link:
+- People's names
+- Anything already wrapped in [[ ]]
+- Generic words, job titles, team names
+- Very granular internal identifiers (table names, config keys, code identifiers)
+  — only link a term if it plausibly has its own vault note
+
+Do not add, remove, or rephrase any content — only wrap existing terms in [[ ]].
+Return ONLY the resulting markdown text, with no preamble, no code fences, and
+no commentary.
+
+Text:
+
+{entry}
+"""
+
+
+def add_backlinks_with_claude(entry_text: str) -> str:
+    prompt = BACKLINK_PROMPT.format(entry=entry_text)
+    try:
+        result = subprocess.run(
+            ["claude", "-p", prompt],
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+    except FileNotFoundError:
+        log("! `claude` CLI not found on PATH — skipping backlinks")
+        return entry_text
+    except subprocess.TimeoutExpired:
+        log("! claude -p timed out on backlinking, falling back to unlinked text")
+        return entry_text
+
+    if result.returncode != 0:
+        log(f"! claude -p failed on backlinking: {result.stderr.strip()[:300]}")
+        return entry_text
+
+    return result.stdout.strip()
+
+
 def write_journal_entry(summary: str, date_str: str, dry_run: bool) -> None:
     VAULT_JOURNAL_DIR.mkdir(parents=True, exist_ok=True)
     out_path = VAULT_JOURNAL_DIR / f"{date_str}.md"
@@ -266,15 +322,30 @@ def write_journal_entry(summary: str, date_str: str, dry_run: bool) -> None:
 
 def main():
     parser = argparse.ArgumentParser(description="Summarize Claude Code sessions into a daily journal.")
-    parser.add_argument("--since-hours", type=float, default=24.0, help="Look back this many hours (default 24)")
+    parser.add_argument(
+        "--since-hours",
+        type=float,
+        default=None,
+        help="Look back this many hours from now (rolling window, dated today). "
+        "If omitted, summarizes the previous calendar day instead.",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Print digest/summary, don't write or call claude")
     args = parser.parse_args()
 
-    since = datetime.now() - timedelta(hours=args.since_hours)
-    date_str = datetime.now().strftime("%Y-%m-%d")
+    now = datetime.now()
 
-    log(f"Starting journal run, looking back to {since}")
-    digests = collect_digests(since)
+    if args.since_hours is None:
+        yesterday = (now - timedelta(days=1)).date()
+        since = datetime.combine(yesterday, datetime.min.time())
+        until = since + timedelta(days=1)
+        date_str = yesterday.strftime("%Y-%m-%d")
+    else:
+        since = now - timedelta(hours=args.since_hours)
+        until = now
+        date_str = now.strftime("%Y-%m-%d")
+
+    log(f"Starting journal run, window {since} to {until}")
+    digests = collect_digests(since, until)
 
     if not digests:
         log("No session activity found in window — nothing to write.")
@@ -285,7 +356,12 @@ def main():
     if args.dry_run:
         log("=== RAW DIGEST ===\n" + digest_text)
 
-    summary = digest_text if args.dry_run else summarize_with_claude(digest_text)
+    if args.dry_run:
+        summary = digest_text
+    else:
+        summary = summarize_with_claude(digest_text)
+        summary = add_backlinks_with_claude(summary)
+
     write_journal_entry(summary, date_str, args.dry_run)
 
 

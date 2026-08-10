@@ -7,15 +7,15 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/usr/bin/python3</string>
+        <string>/opt/homebrew/bin/python3</string>
         <string>/Users/mark/mtjb/dotfiles/automation/claude_journal.py</string>
     </array>
 
-    <!-- Runs every day at 18:30 local time -->
+    <!-- Runs every day at 11:00 local time, summarizing the previous calendar day -->
     <key>StartCalendarInterval</key>
     <dict>
         <key>Hour</key>
-        <integer>17</integer>
+        <integer>11</integer>
         <key>Minute</key>
         <integer>00</integer>
     </dict>
