@@ -8,16 +8,16 @@
     <key>ProgramArguments</key>
     <array>
         <string>/usr/bin/python3</string>
-        <string>/Users/mark/Code/claude-journal/claude_journal.py</string>
+        <string>/Users/mark/mtjb/dotfiles/automation/claude_journal.py</string>
     </array>
 
     <!-- Runs every day at 18:30 local time -->
     <key>StartCalendarInterval</key>
     <dict>
         <key>Hour</key>
-        <integer>18</integer>
+        <integer>17</integer>
         <key>Minute</key>
-        <integer>30</integer>
+        <integer>00</integer>
     </dict>
 
     <!-- Make sure `claude` on PATH is findable — adjust if your shell PATH differs -->
