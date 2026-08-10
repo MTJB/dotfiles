@@ -25,7 +25,7 @@ from pathlib import Path
 
 CLAUDE_PROJECTS_DIR = Path.home() / ".claude" / "projects"
 VAULT_JOURNAL_DIR = Path(
-    "/Users/mark/Library/Mobile Documents/iCloud~md~obsidian/Documents/Notes/Journal"
+    "/Users/mark/Library/Mobile Documents/iCloud~md~obsidian/Documents/Notes/05 Reference/Journal"
 )
 LOG_FILE = Path.home() / ".claude" / "journal.log"
 
