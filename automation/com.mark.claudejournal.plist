@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.mark.claudejournal</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>/Users/mark/Code/claude-journal/claude_journal.py</string>
+    </array>
+
+    <!-- Runs every day at 18:30 local time -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>18</integer>
+        <key>Minute</key>
+        <integer>30</integer>
+    </dict>
+
+    <!-- Make sure `claude` on PATH is findable — adjust if your shell PATH differs -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/Users/mark/.npm-global/bin</string>
+        <key>HOME</key>
+        <string>/Users/mark</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/mark/.claude/journal-launchd.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/mark/.claude/journal-launchd-error.log</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>
