@@ -22,6 +22,7 @@ import argparse
 import json
 import subprocess
 import sys
+import traceback
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -41,6 +42,7 @@ SELF_PROMPT_PREFIXES = (
     "Add Obsidian wiki-links to the journal entry below",
 )
 LOG_FILE = Path.home() / ".claude" / "journal.log"
+PENDING_DIR = Path.home() / ".claude" / "journal-pending"
 
 # Tool names whose inputs we bother extracting file paths from
 FILE_TOOLS = {"Read", "Write", "Edit", "NotebookEdit"}
@@ -55,6 +57,30 @@ def log(msg: str) -> None:
             f.write(line + "\n")
     except Exception:
         pass
+
+
+def notify_failure(message: str) -> None:
+    """Pop a macOS notification so a failed run is not silent."""
+    safe = message.replace("\\", " ").replace('"', "'")[:200]
+    try:
+        subprocess.run(
+            ["osascript", "-e", f'display notification "{safe}" with title "Claude journal failed"'],
+            timeout=10,
+        )
+    except Exception:
+        pass
+
+
+def save_pending(summary: str, date_str: str) -> Path | None:
+    """Keep a summary that could not be written, so the quota used to
+    generate it is not wasted and nothing is lost."""
+    try:
+        PENDING_DIR.mkdir(parents=True, exist_ok=True)
+        path = PENDING_DIR / f"{date_str}.md"
+        path.write_text(summary + "\n")
+        return path
+    except Exception:
+        return None
 
 
 def readable_project_name(encoded_dir_name: str) -> str:
@@ -344,7 +370,10 @@ def write_journal_entry(summary: str, date_str: str, dry_run: bool) -> None:
         return
 
     # Re-read just before writing in case the note is being edited in Obsidian.
-    existing = out_path.read_text() if out_path.exists() else NEW_DAILY_NOTE.format(date=date_str)
+    existing = out_path.read_text() if out_path.exists() else ""
+    if not existing.strip():
+        # Missing or empty note (e.g. created without the template): start from the Daily layout.
+        existing = NEW_DAILY_NOTE.format(date=date_str)
 
     start = existing.find(JOURNAL_START)
     end = existing.find(JOURNAL_END)
@@ -419,8 +448,24 @@ def main():
         summary = summarize_with_claude(digest_text)
         summary = add_backlinks_with_claude(summary)
 
-    write_journal_entry(summary, date_str, args.dry_run)
+    try:
+        write_journal_entry(summary, date_str, args.dry_run)
+    except Exception as e:
+        pending = save_pending(summary, date_str)
+        log(f"! failed to write {date_str}: {e!r}\n{traceback.format_exc()}")
+        notify_failure(
+            f"Could not write {date_str} ({type(e).__name__}). "
+            + (f"Summary saved to {pending}." if pending else "Summary lost.")
+        )
+        return 1
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except SystemExit:
+        raise
+    except Exception as e:
+        log(f"! unexpected failure: {e!r}\n{traceback.format_exc()}")
+        notify_failure(f"Unexpected error: {type(e).__name__}. See ~/.claude/journal.log")
+        sys.exit(1)

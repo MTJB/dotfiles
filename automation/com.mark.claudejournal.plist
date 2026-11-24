@@ -7,8 +7,8 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/opt/homebrew/bin/python3</string>
-        <string>/Users/mark/mtjb/dotfiles/automation/claude_journal.py</string>
+        <!-- Stable-path launcher that holds the Full Disk Access grant; see claude_journal_launcher.c -->
+        <string>/Users/mark/.local/bin/claude-journal-launcher</string>
     </array>
 
     <!-- Runs every day at 11:00 local time, summarizing the previous calendar day -->
