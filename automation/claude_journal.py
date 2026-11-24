@@ -4,7 +4,7 @@ claude_journal.py
 
 Scans local Claude Code session transcripts (~/.claude/projects/**/*.jsonl),
 pulls out what happened in the last N hours, summarizes it with a headless
-`claude -p` call, and writes a daily journal entry into an Obsidian vault.
+`claude -p` call, and writes the summary into the day's Obsidian daily note, inside a marked block.
 
 Usage:
     python3 claude_journal.py                 # normal run, summarizes the previous calendar day
@@ -28,8 +28,17 @@ from pathlib import Path
 # ---- Configuration -------------------------------------------------------
 
 CLAUDE_PROJECTS_DIR = Path.home() / ".claude" / "projects"
-VAULT_JOURNAL_DIR = Path(
-    "/Users/mark/Library/Mobile Documents/iCloud~md~obsidian/Documents/Notes/05 Reference/Journal"
+VAULT_DAILY_DIR = Path(
+    "/Users/mark/Library/Mobile Documents/iCloud~md~obsidian/Documents/Notes/05 Reference/Daily"
+)
+JOURNAL_START = "<!-- journal:start -->"
+JOURNAL_END = "<!-- journal:end -->"
+
+# Sessions started by this script's own `claude -p` calls; skipped so the
+# journal doesn't summarise itself.
+SELF_PROMPT_PREFIXES = (
+    "You are helping write a concise daily engineering journal",
+    "Add Obsidian wiki-links to the journal entry below",
 )
 LOG_FILE = Path.home() / ".claude" / "journal.log"
 
@@ -153,6 +162,9 @@ def parse_session(path: Path, since: datetime, until: datetime) -> dict | None:
     if not activity_after_cutoff:
         return None
 
+    if first_user_msg and first_user_msg.startswith(SELF_PROMPT_PREFIXES):
+        return None
+
     return {
         "session_id": path.stem,
         "first_user_msg": first_user_msg or "(no user message found)",
@@ -212,7 +224,7 @@ SUMMARY_PROMPT = """You are helping write a concise daily engineering journal en
 Below is a raw digest of Claude Code sessions from today, grouped by project.
 Turn this into a tight markdown summary:
 
-- Group by project (use the project names given)
+- Group by project, using the project names given as ### headings
 - Under each project, a few bullet points on what was actually worked on
   (infer intent from the opening message, files touched, and commands run
   — don't just restate the raw log)
@@ -301,22 +313,55 @@ def add_backlinks_with_claude(entry_text: str) -> str:
     return result.stdout.strip()
 
 
-def write_journal_entry(summary: str, date_str: str, dry_run: bool) -> None:
-    VAULT_JOURNAL_DIR.mkdir(parents=True, exist_ok=True)
-    out_path = VAULT_JOURNAL_DIR / f"{date_str}.md"
+NEW_DAILY_NOTE = """---
+date: {date}
+type: daily
+tags: [daily]
+---
+# {date}
 
-    header = f"# {date_str} — Claude Code Journal\n\n"
-    body = header + summary + "\n"
+## Quick capture
+-
+
+## Tasks
+- [ ]
+
+## Links
+"""
+
+
+def write_journal_entry(summary: str, date_str: str, dry_run: bool) -> None:
+    """Write the summary into the daily note for `date_str`, inside the
+    journal:start/end markers. Only the text between the markers is ever
+    replaced; everything else in the note belongs to the human."""
+    VAULT_DAILY_DIR.mkdir(parents=True, exist_ok=True)
+    out_path = VAULT_DAILY_DIR / f"{date_str}.md"
+
+    block = f"{JOURNAL_START}\n## Claude journal\n\n{summary}\n{JOURNAL_END}"
 
     if dry_run:
-        log(f"[dry-run] would write to {out_path}:\n{body}")
+        log(f"[dry-run] would write to {out_path}:\n{block}")
         return
 
-    if out_path.exists():
-        existing = out_path.read_text()
-        body = existing.rstrip() + "\n\n---\n\n" + summary + "\n"
+    # Re-read just before writing in case the note is being edited in Obsidian.
+    existing = out_path.read_text() if out_path.exists() else NEW_DAILY_NOTE.format(date=date_str)
 
-    out_path.write_text(body)
+    start = existing.find(JOURNAL_START)
+    end = existing.find(JOURNAL_END)
+    if start != -1 and end > start:
+        updated = existing[:start] + block + existing[end + len(JOURNAL_END):]
+    else:
+        if start != -1 or end != -1:
+            log(f"! unmatched journal marker in {out_path}, appending a new block")
+        updated = existing.rstrip() + "\n\n" + block + "\n"
+
+    if updated == existing:
+        log(f"Journal block unchanged in {out_path}")
+        return
+
+    tmp_path = out_path.with_name(out_path.name + ".journal-tmp")
+    tmp_path.write_text(updated)
+    tmp_path.replace(out_path)
     log(f"Wrote journal entry to {out_path}")
 
 
@@ -329,12 +374,24 @@ def main():
         help="Look back this many hours from now (rolling window, dated today). "
         "If omitted, summarizes the previous calendar day instead.",
     )
+    parser.add_argument(
+        "--date",
+        type=str,
+        default=None,
+        help="Backfill a specific calendar day (YYYY-MM-DD) instead of the previous day. "
+        "Takes precedence over --since-hours.",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Print digest/summary, don't write or call claude")
     args = parser.parse_args()
 
     now = datetime.now()
 
-    if args.since_hours is None:
+    if args.date is not None:
+        target_day = datetime.strptime(args.date, "%Y-%m-%d").date()
+        since = datetime.combine(target_day, datetime.min.time())
+        until = since + timedelta(days=1)
+        date_str = target_day.strftime("%Y-%m-%d")
+    elif args.since_hours is None:
         yesterday = (now - timedelta(days=1)).date()
         since = datetime.combine(yesterday, datetime.min.time())
         until = since + timedelta(days=1)
